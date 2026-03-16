@@ -1,0 +1,100 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider             = "prisma-client-py"
+  recursive_type_depth = 5
+}
+
+// Enum para controle de acesso
+enum Role {
+  OWNER      // Pode gerenciar o projeto e ver todas as respostas
+  COLLECTOR  // Pode apenas responder e ver as próprias respostas
+}
+
+model User {
+  id              String        @id @default(uuid())
+  email           String        @unique
+  name            String?
+  password        String?
+  provider        String        // "local", "google", ou "facebook"
+  globalMetadata  Json?
+  
+  // Relações
+  ownedProjects   Project[]     @relation("ProjectOwner") // Adicione esta linha
+  projects        UserProject[]
+  submissions     Submission[]
+  createdAt       DateTime      @default(now())
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  logoUrl     String?
+  themeColor  String   @default("#3B82F6")
+  isPublic    Boolean  @default(false)
+  ownerId     String
+  owner       User     @relation("ProjectOwner", fields: [ownerId], references: [id])
+  forms       Form[]
+  members     UserProject[]
+  
+  invitations ProjectInvitation[] 
+
+  createdAt   DateTime @default(now())
+  deletedAt   DateTime?
+}
+
+model UserProject {
+  userId                  String
+  projectId               String
+  role                    Role    @default(COLLECTOR)
+  user                    User    @relation(fields: [userId], references: [id])
+  project                 Project @relation(fields: [projectId], references: [id])
+  projectSpecificMetadata Json?   // Ex: {"escola": "Escola Técnica"}
+
+  @@id([userId, projectId])
+}
+
+model Form {
+  id          String       @id @default(uuid())
+  title       String
+  description String?
+  structure   Json         // Estrutura dinâmica dos campos
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id])
+  submissions Submission[]
+  createdAt   DateTime     @default(now())
+  deletedAt   DateTime?
+}
+
+model Submission {
+  id        String   @id // ID gerado no Mobile (UUID) para Offline Sync
+  formData  Json     // Respostas enviadas
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  formId    String
+  form      Form     @relation(fields: [formId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+}
+
+model ProjectInvitation {
+  id        String           @id @default(uuid())
+  email     String
+  projectId String
+  project   Project          @relation(fields: [projectId], references: [id])
+  status    InvitationStatus @default(PENDING)
+  role      Role             @default(COLLECTOR)
+  createdAt DateTime         @default(now())
+
+  @@unique([email, projectId]) // Evita convidar a mesma pessoa duas vezes para o mesmo projeto
+}
+
