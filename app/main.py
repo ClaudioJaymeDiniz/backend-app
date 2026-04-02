@@ -28,6 +28,7 @@ async def lifespan(app: FastAPI):
     print("🛑 Conexão com o banco encerrada.")
 
 app = FastAPI(
+    lifespan=lifespan,
     title="Smart Forms API",
     description="Backend para gestão de formulários dinâmicos com sincronização offline e analytics.",
     version="1.0.0",

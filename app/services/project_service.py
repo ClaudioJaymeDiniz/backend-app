@@ -1,7 +1,5 @@
 from datetime import datetime
-
 from fastapi import HTTPException
-
 from app.core.prisma_client import db
 from app.schemas.project import ProjectCreate, ProjectUpdate
 
@@ -18,14 +16,6 @@ class ProjectService:
                 "ownerId": owner_id
             }
         )
-    '''
-    @staticmethod
-    async def get_projects_by_owner(owner_id: str):
-        return await db.project.find_many(
-            where={"ownerId": owner_id},
-            include={"forms": True},
-            order_by={"createdAt": "desc"} # Organiza do mais novo para o mais antigo
-        )'''
     
     @staticmethod
     async def get_projects_by_owner(owner_id: str):
@@ -36,7 +26,7 @@ class ProjectService:
                 "deletedAt": None  # Filtro de exclusão lógica
             },
             include={"forms": True},
-            order_by={"createdAt": "desc"}
+            order={"createdAt": "desc"} # CORREÇÃO: 'order' em vez de 'order_by'
         )
 
     @staticmethod
@@ -48,25 +38,15 @@ class ProjectService:
 
     @staticmethod
     async def update_project(project_id: str, data: ProjectUpdate):
-        # O exclude_unset=True é fundamental aqui para não resetar campos que não foram enviados
         update_data = data.model_dump(exclude_unset=True)
         return await db.project.update(
             where={"id": project_id},
             data=update_data
         )
 
-    '''
-    @staticmethod
-    async def delete_project(project_id: str):
-        return await db.project.delete(where={"id": project_id})
-    '''
-    
     @staticmethod
     async def archive_project(project_id: str):
-        """
-        Realiza a exclusão lógica (Soft Delete).
-        Atende ao RF 14 (Exclusão Lógica).
-        """
+        """Realiza a exclusão lógica (Soft Delete)."""
         return await db.project.update(
             where={"id": project_id},
             data={"deletedAt": datetime.now()}
@@ -74,24 +54,27 @@ class ProjectService:
     
     @staticmethod
     async def restore_project(project_id: str, user_id: str):
-        """Restaura um projeto removendo a data de exclusão."""
-        # Verificamos se o projeto pertence ao usuário antes de restaurar
         project = await db.project.find_unique(where={"id": project_id})
         if not project or project.ownerId != user_id:
             raise HTTPException(status_code=403, detail="Acesso negado")
 
         return await db.project.update(
             where={"id": project_id},
-            data={"deletedAt": None} # Define como nulo para "voltar à vida"
+            data={"deletedAt": None}
         )
     
     @staticmethod
     async def get_archived_projects(owner_id: str):
-        """Lista apenas projetos que ESTÃO na lixeira (deletedAt não é nulo)."""
+        """Lista apenas projetos que ESTÃO na lixeira."""
         return await db.project.find_many(
             where={
                 "ownerId": owner_id,
-                "NOT": {"deletedAt": None} # Filtra apenas os deletados
+                "NOT": {"deletedAt": None}
             },
-            order_by={"deletedAt": "desc"}
+            order={"deletedAt": "desc"} # CORREÇÃO: 'order' em vez de 'order_by'
         )
+
+    @staticmethod
+    async def delete_project(project_id: str):
+        """Exclusão permanente do banco."""
+        return await db.project.delete(where={"id": project_id})
