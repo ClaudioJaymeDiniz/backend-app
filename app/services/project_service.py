@@ -5,15 +5,19 @@ from app.schemas.project import ProjectCreate, ProjectUpdate
 
 class ProjectService:
     @staticmethod
-    async def create_project(data: ProjectCreate, owner_id: str):
+    async def create_project(data: ProjectCreate, user_id: str):
         return await db.project.create(
             data={
                 "name": data.name,
                 "description": data.description,
-                "isPublic": data.isPublic,
-                "logoUrl": data.logoUrl,
                 "themeColor": data.themeColor,
-                "ownerId": owner_id
+                "ownerId": user_id,
+                "members": {
+                    "create": {
+                        "userId": user_id,
+                        "role": "OWNER"
+                    }
+                }
             }
         )
     
@@ -33,7 +37,14 @@ class ProjectService:
     async def get_project_by_id(project_id: str):
         return await db.project.find_unique(
             where={"id": project_id},
-            include={"forms": True}
+            include={
+                "owner": True,      # Traz os dados do dono
+                "members": {        # Traz a lista da tabela UserProject
+                    "include": {
+                        "user": True # Traz o nome/email do membro de dentro de UserProject
+                    }
+                }
+            }
         )
 
     @staticmethod
@@ -78,3 +89,27 @@ class ProjectService:
     async def delete_project(project_id: str):
         """Exclusão permanente do banco."""
         return await db.project.delete(where={"id": project_id})
+
+    @staticmethod
+    async def list_projects(user_id: str):
+        """
+        Retorna projetos onde o usuário é o dono OU é um membro convidado.
+        """
+        return await db.project.find_many(
+            where={
+                "deletedAt": None, # Apenas projetos ativos
+                "OR": [
+                    {"ownerId": user_id}, # Projetos que eu criei
+                    {
+                        "members": {
+                            "some": {"userId": user_id} # Projetos onde sou membro
+                        }
+                    }
+                ]
+            },
+            include={
+                "owner": True,
+                "forms": True
+            },
+            order={"createdAt": "desc"}
+        )

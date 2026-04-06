@@ -6,11 +6,12 @@ from app.core.prisma_client import db
 from app.api.auth import router as auth_router
 from app.api.projects import router as projects_router
 from app.api.forms import router as forms_router
-from app.api.submissions import router as submissions_router # Importe correto
+from app.api.submissions import router as submissions_router 
+from app.api.invitations import router as invitations_router
 # from fastapi.staticfiles import StaticFiles
 import os
 from app.api.uploads import router as uploads_router
-
+from app.api import users, invitations
 
 
 
@@ -63,4 +64,5 @@ app.include_router(forms_router)
 app.include_router(submissions_router) # Adicionado o router de submissões
 app.include_router(uploads_router) # Adicionado o router de uploads
 
-
+app.include_router(users.router)
+app.include_router(invitations.router)

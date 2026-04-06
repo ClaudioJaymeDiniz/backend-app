@@ -1,31 +1,3 @@
-'''
-from pydantic import BaseModel, EmailStr
-from typing import Optional
-from datetime import datetime
-
-# O que é comum a todos
-class UserBase(BaseModel):
-    email: EmailStr
-    name: Optional[str] = None
-
-# O que recebemos no Cadastro
-class UserCreate(UserBase):
-    password: str
-
-# O que devolvemos para o Frontend (Sem a senha!)
-class UserResponse(UserBase):
-    id: str
-    createdAt: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class UserUpdate(BaseModel):
-    name: Optional[str] = None
-    password: Optional[str] = None # Caso ele queira trocar a senha
-    '''
-
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Any
 from datetime import datetime
@@ -51,6 +23,22 @@ class UserResponse(UserBase):
     id: str
     createdAt: datetime
     globalMetadata: Optional[Any] = None
+
+    class Config:
+        from_attributes = True
+
+# Recuperar senha
+class PasswordRecoveryRequest(BaseModel):
+    email: EmailStr
+
+class PasswordReset(BaseModel):
+    token: str
+    new_password: str
+
+class UserSimple(BaseModel):
+    id: str
+    name: Optional[str] = None
+    email: EmailStr
 
     class Config:
         from_attributes = True

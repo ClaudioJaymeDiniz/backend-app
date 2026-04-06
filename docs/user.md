@@ -1,89 +1,214 @@
-1. Módulo de Usuário: Camada de Dados (Prisma)
+📑 Documentação de API: Módulo de Usuário (User)
 
-O modelo User é a base de toda a aplicação. Ele utiliza UUID para identificação única, o que aumenta a segurança ao não expor IDs sequenciais.
+Este módulo gerencia o ciclo de vida dos usuários, desde o registro até a atualização de metadados globais e exclusão da conta.
+🗄️ Modelo de Dados (Prisma Entity)
 
-Campo	        Tipo	        Descrição
-id	            String(UUID)	Chave primária gerada automaticamente.
-email	        String	        E-mail único utilizado para login.
-password	    String	        Hash da senha (armazenado via Bcrypt).
-provider	    String	        Origem do login (local, google, facebook).
-globalMetadata	Json	        Campo flexível para configurações globais do usuário.
+O usuário é a entidade central. No banco de dados PostgreSQL, ele é representado da seguinte forma:
+Campo	Tipo	Descrição
+id	String (UUID)	Chave primária única.
+email	String	E-mail único usado para login.
+name	String?	Nome completo (opcional).
+password	String?	Hash da senha (armazenado apenas para login local).
+provider	String	Origem da conta (local, google, facebook).
+globalMetadata	Json?	Metadados genéricos do usuário.
+createdAt	DateTime	Timestamp de criação automática.
+🛠️ Service: UserService
 
-2. Camada de Validação (Schemas Pydantic)
+Camada de lógica que interage com o Prisma Client.
 
-Os Schemas garantem que o JSON enviado pelo usuário esteja correto antes de chegar ao banco de dados.
+    create_user(user_in: UserCreate): Criptografa a senha usando bcrypt via get_password_hash e persiste o usuário.
+
+    get_by_email(email: str): Busca rápida para autenticação.
+
+    get_by_id(user_id: str): Busca para resolução de dependências e perfil.
+
+    update_user(user_id: str, user_in: UserUpdate): Atualiza campos parciais. Se uma nova senha for enviada, ela é hasheada automaticamente.
+
+    delete_user(user_id: str): Remove permanentemente o registro (Hard Delete).
+
+🚀 Rotas e Endpoints (FastAPI)
+1. Registro de Usuário
+
+POST /users/register (ou conforme sua rota de auth)
+
+    Descrição: Cria uma nova conta no sistema.
+
+    Body (Schema: UserCreate):
+
+    {
+  "email": "exemplo@email.com",
+  "password": "senha_segura",
+  "name": "Claudio Jayme"
+}
+Resposta: UserResponse (201 Created).
+
+2. Obter Perfil Atual
+
+GET /users/me
+
+    Requisito: Dependência get_current_user (Bearer Token).
+
+    Descrição: Retorna os dados do usuário autenticado.
+
+    Resposta: UserResponse.
+
+3. Atualizar Dados
+
+PATCH /users/me
+
+    Body (Schema: UserUpdate):
+
+        name: string (opcional)
+
+        password: string (opcional)
+
+        globalMetadata: objeto json (opcional)
+
+    Função: O exclude_unset=True no service garante que apenas os campos enviados sejam alterados.
+
+🔐 Schemas de Validação (Pydantic)
+
+A documentação de tipos garante a integridade dos dados trafegados:
+Classe	Finalidade	Campos Principais
+UserCreate	Ingestão de dados	email (validado), password (raw), name.
+UserUpdate	Edição parcial	password (opcional), globalMetadata (dict).
+UserResponse	Resposta da API	id, createdAt. Nunca inclui password.
+UserSimple	Relacionamentos	Versão leve para listas e convites (id, name, email).
+
+
+Documentação de API: Fluxo de Autenticação (Auth)
+
+Este módulo gerencia o acesso seguro ao sistema, controle de sessões via tokens e recuperação de contas.
+🛡️ Estratégia de Segurança
+
+    Hash de Senhas: Utiliza bcrypt para garantir que senhas nunca sejam armazenadas em texto plano.
+
+    Tokens de Acesso: Implementa JWT (JSON Web Tokens) com tempo de expiração, garantindo que as requisições ao Linux Mint sejam autenticadas.
+
+    Dependency Injection: Utiliza a função get_current_user como um "guardião" em rotas protegidas.
+
+🚀 Endpoints de Autenticação
+1. Registro de Novo Usuário
+
 POST /auth/register
 
-Espera no JSON (UserCreate):
-{
-  "email": "professor@fatec.sp.gov.br",
-  "name": "Claudio Jayme",
-  "password": "senha_segura_aqui",
-  "provider": "local"
-}
+    Descrição: Cria uma conta vinculada ao provedor local.
 
-PATCH /auth/me
+    Regra de Negócio: Verifica se o e-mail já existe na base do Prisma antes de prosseguir.
 
-Espera no JSON (UserUpdate):
-(Todos os campos são opcionais - envie apenas o que quer mudar)
-{
-  "name": "Claudio J. Atualizado",
-  "password": "nova_senha_opcional",
-  "globalMetadata": { "tema": "dark" }
-}
+    Resposta: UserResponse (sem a senha).
 
-3. Camada de Serviço (UserService)
+2. Login e Geração de Token
 
-O UserService centraliza as regras de negócio. É aqui que a senha é transformada em Hash antes de ser salva.
+POST /auth/login
 
-    create_user: Recebe os dados brutos, aplica o hash na senha e persiste no banco.
+    Entrada: username (e-mail) e password via OAuth2PasswordRequestForm.
 
-    update_user: Utiliza exclude_unset=True para atualizar apenas os campos enviados, protegendo os dados existentes.
+    Processamento:
 
-    get_by_email / get_by_id: Métodos auxiliares para busca e validação de existência.
+        Busca o usuário por e-mail.
 
-4. Endpoints de Autenticação (API Routes)
+        Verifica o hash da senha.
 
-Aqui estão as rotas que o seu app React Native irá consumir.
-A. Registro de Usuário
+        Gera um JWT contendo o id e email no payload (sub).
+
+    Resposta: ```json
+    {
+    "access_token": "eyJhbG...",
+    "token_type": "bearer"
+    }
+
+    3. Gestão do Perfil Próprio (/me)
+Rota	Método	Descrição
+/auth/me	GET	Retorna os dados completos do usuário dono do token.
+/auth/me	PATCH	Permite que o usuário atualize seu nome, senha ou metadados.
+4. Recuperação de Senha (Fluxo de 2 Etapas)
+
+    Etapa 1: POST /auth/recover-password
+
+        Gera um uuid4 como token de uso único.
+
+        Armazena o token e a expiração (1 hora) no campo globalMetadata do JSON no PostgreSQL.
+
+        Nota para o TCC: Demonstra o uso versátil de campos JSON para evitar a criação excessiva de tabelas simples.
+
+    Etapa 2: POST /auth/reset-password
+
+        Valida o token via busca no JSON.
+
+        Verifica se o token ainda é válido (data de expiração).
+
+        Atualiza a senha e limpa o token do metadado por segurança.
+
+        Com certeza, Claudio. Vamos detalhar o módulo de Usuário e Autenticação (User & Auth) com o mesmo nível de rigor técnico, separando as rotas de gerenciamento de conta das rotas de segurança (Login/Token).
+
+Para o seu TCC, essa separação demonstra que você entende a diferença entre Identidade (quem o usuário é) e Acesso (o que o usuário pode fazer).
+📑 Referência de API: Módulo de Usuário e Autenticação
+
+Este módulo é dividido em dois controladores: /auth (Segurança e Sessão) e o suporte do UserService (Persistência).
+🔐 1. Endpoints de Autenticação (/auth)
+
+Gerencia o ciclo de vida da sessão e a segurança da conta.
+1.1 Registrar Novo Usuário
 
     Rota: POST /auth/register
 
-    Sucesso (200 OK): Retorna o objeto UserResponse (sem a senha).
+    Entrada: UserCreate (email, password, name).
 
-    Erro (400): Se o e-mail já existir.
+    Validação: Verifica via UserService.get_by_email se o e-mail já existe.
 
-B. Login (Geração de Token)
+    Segurança: A senha é hasheada no Service antes de tocar o banco de dados.
+
+1.2 Login (Geração de Token)
 
     Rota: POST /auth/login
 
-    Formato de envio: x-www-form-urlencoded (Padrão OAuth2).
+    Entrada: OAuth2PasswordRequestForm (username/password).
 
-    Campos: username (e-mail) e password.
+    Processamento: 1. verify_password: Compara o hash do banco com a senha enviada.
+    2. create_access_token: Gera um JWT com o ID e Email.
 
-    Retorno:
-    {
-        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-        "token_type": "bearer"
-    }      
-C. Perfil do Usuário
+    Resposta: Objeto contendo o access_token e o token_type: bearer.
+
+1.3 Obter Meu Perfil
 
     Rota: GET /auth/me
 
-    Requisito: Requer Header Authorization: Bearer <token>.
+    Requisito: Bearer Token válido.
 
-    Descrição: Retorna os dados completos do usuário logado (id, e-mail, nome, metadata).
+    Descrição: Retorna os dados do usuário dono do token atual (current_user). Útil para sincronizar o estado do App no mobile.
 
-5. Fluxo de Segurança
+1.4 Atualizar Meu Perfil
 
-O sistema utiliza JWT (JSON Web Token). O fluxo funciona assim:
+    Rota: PATCH /auth/me
 
-    O usuário envia credenciais.
+    Entrada: UserUpdate (campos opcionais).
 
-    O servidor valida e devolve um Token assinado.
+    Descrição: Permite alterar nome, senha ou globalMetadata. Se a senha for alterada, um novo hash é gerado automaticamente.
 
-    O App Mobile guarda esse token.
+1.5 Recuperação de Senha (Solicitação)
 
-    Para acessar /me ou criar projetos, o App envia o token no cabeçalho.
+    Rota: POST /auth/recover-password
 
-    O deps.py intercepta, decodifica o sub (ID do usuário) e injeta o objeto current_user na função da rota.
+    Entrada: PasswordRecoveryRequest (email).
+
+    Lógica: 1. Gera um UUID único como token.
+    2. Grava o token e a expiração (ISO String) dentro do campo JSON globalMetadata.
+
+    Segurança: Retorna uma mensagem genérica mesmo que o e-mail não exista (evita User Enumeration).
+
+1.6 Reset de Senha (Confirmação)
+
+    Rota: POST /auth/reset-password
+
+    Entrada: PasswordReset (token, new_password).
+
+    Lógica: 1. Busca o usuário que possui aquele token exato dentro do JSON globalMetadata.
+    2. Valida se o tempo atual é menor que reset_token_expires.
+    3. Atualiza a senha e remove as chaves de token do JSON para invalidar o uso repetido.
+
+    Função,Parâmetros,Descrição Técnica
+create_user,UserCreate,Aplica get_password_hash e db.user.create.
+get_by_email,email: str,Busca indexada via @unique no Prisma.
+update_user,"id, UserUpdate",Usa model_dump(exclude_unset=True) para updates parciais.
+delete_user,id: str,db.user.delete (Hard Delete).

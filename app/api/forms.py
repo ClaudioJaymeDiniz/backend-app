@@ -21,18 +21,18 @@ async def list_project_forms(project_id: str, user = Depends(get_current_user)):
 
 @router.get("/{form_id}", response_model=FormResponse)
 async def get_form_details(form_id: str, user = Depends(get_current_user)):
+    """
+    Retorna os detalhes de um formulário específico.
+    Valida se o usuário tem acesso via projeto ou convite (RF 04 e 17).
+    """
     form = await FormService.get_form_by_id(form_id)
     if not form:
         raise HTTPException(status_code=404, detail="Formulário não encontrado")
+    
+    # Validação de segurança unificada
+    await InvitationService.check_access(form.projectId, user.email)
+    
     return form
-
-@router.get("/{form_id}/results", response_model=List[SubmissionResponse])
-async def get_form_results(form_id: str, user = Depends(get_current_user)):
-    """
-    Retorna todas as respostas de um formulário. 
-    Acesso restrito ao dono do projeto.
-    """
-    return await FormService.get_all_submissions_for_form(form_id, user.id)
 
 @router.get("/{form_id}/export/csv")
 async def export_responses(form_id: str, user = Depends(get_current_user)):

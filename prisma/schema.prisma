@@ -1,11 +1,11 @@
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
 generator client {
   provider             = "prisma-client-py"
   recursive_type_depth = 5
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL") // A versão 5 EXIGE isso aqui
 }
 
 // Enum para controle de acesso
@@ -93,8 +93,12 @@ model ProjectInvitation {
   project   Project          @relation(fields: [projectId], references: [id])
   status    InvitationStatus @default(PENDING)
   role      Role             @default(COLLECTOR)
+  
+  // Opcional: Relaciona com o usuário se ele já existir ou quando ele se cadastrar
+  userId    String?
+  
   createdAt DateTime         @default(now())
 
-  @@unique([email, projectId]) // Evita convidar a mesma pessoa duas vezes para o mesmo projeto
+  @@unique([email, projectId])
 }
 

@@ -15,7 +15,12 @@ class FormBase(BaseModel):
 
 class FormCreate(FormBase):
     projectId: str
-    fields: List[FormField]
+    structure: List[FormField]  # <--- Alterado de fields para structure
+
+class FormUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    structure: Optional[List[FormField]] = None
 
 class FormResponse(FormBase):
     id: str
@@ -26,7 +31,3 @@ class FormResponse(FormBase):
     class Config:
         from_attributes = True
 
-class FormUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    fields: Optional[List[FormField]] = None

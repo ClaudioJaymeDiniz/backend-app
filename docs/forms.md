@@ -1,74 +1,63 @@
-1. Módulo de Formulários: Camada de Dados (Prisma)
+📑 Referência de API: Módulo de Formulários (Form)
 
-O diferencial aqui é o uso do tipo Json para o campo structure. Enquanto bancos de dados tradicionais exigem tabelas rígidas, o PostgreSQL (via Prisma) permite armazenar objetos complexos, garantindo a natureza "Smart" do projeto.
+O módulo de formulários gerencia a estrutura dinâmica das coletas de dados e o processamento dos resultados para os usuários.
+🗄️ Modelo de Dados (Prisma Entity)
 
-Campo	    Tipo	        Descrição
-id	        String(UUID)	Identificador único do formulário.
-title	    String	        Nome do formulário (Ex: "Ficha de Inscrição").
-structure	Json	        O coração do sistema. Armazena a lista de campos, tipos e regras de validação.
-projectId	String	        Chave estrangeira que vincula o formulário a um projeto específico.
+O formulário armazena a "receita" de como o App Mobile deve renderizar os campos.
+Campo	Tipo	Descrição
+id	String (UUID)	Identificador único.
+title	String	Nome do formulário (ex: "Censo escolar").
+structure	Json	Array de objetos contendo label, type e required.
+projectId	String	FK para o projeto pai.
+createdAt	DateTime	Data de criação.
+deletedAt	DateTime?	Controle de exclusão lógica (arquivamento).
+🛠️ Service: FormService
 
-2. Camada de Validação (Schemas Pydantic)
+Este serviço contém a lógica pesada de transformação de dados e exportação.
 
-O FormField define o contrato para cada campo que aparecerá no React Native.
-POST /forms/
+    create_form: Valida a propriedade do projeto e converte a lista de objetos Pydantic em um formato JSON puro que o PostgreSQL/Prisma consegue armazenar.
 
-Espera no JSON (FormCreate):
-{
-  "title": "Avaliação de Oficina",
-  "description": "Feedback dos alunos sobre a aula de Stop Motion",
-  "projectId": "id-do-projeto-aqui",
-  "fields": [
-    {
-      "label": "Nome do Aluno",
-      "type": "text",
-      "required": true
-    },
-    {
-      "label": "Nota da Aula",
-      "type": "number",
-      "required": true
-    },
-    {
-      "label": "Gostou da atividade?",
-      "type": "select",
-      "options": ["Sim", "Não", "Mais ou menos"]
-    }
-  ]
-}
-3. Camada de Inteligência (FormService)
+    export_form_responses_csv: Executa o RF 10. Ele varre todas as submissões, extrai as chaves do JSON de resposta e monta um arquivo CSV em memória usando io.StringIO, evitando o uso de disco no servidor Linux.
 
-O FormService atua como um guardião de integridade e segurança.
+    get_form_analytics: Implementa o RF 11. Realiza agregações temporais para alimentar gráficos de "Respostas por Dia".
 
-    Mapeamento Automático: Ele transforma a lista de objetos fields do Python em um formato Json puro para o Prisma.
+    update_form: Permite a evolução do formulário (RF 13), atualizando o título ou mudando a estrutura de campos dinamicamente.
 
-    Validação de Propriedade: Antes de criar ou excluir um formulário, ele verifica se o projectId realmente pertence ao user_id logado.
+🚀 Rotas e Endpoints (/forms)
+1. Criar Formulário
 
-    Agregação de Resultados: O método get_all_submissions_for_form realiza um join complexo para trazer não apenas as respostas, mas também os nomes dos alunos que responderam, facilitando a vida do professor.
+    Rota: POST /forms/
 
-4. Endpoints de Interação (API Routes)
+    Entrada: FormCreate (Inclui lista de fields).
 
-As rotas foram desenhadas para suportar tanto o fluxo do Professor (Dono) quanto o do Aluno (Coletor).
-A. Listar Formulários do Projeto
+    Regra: Só pode ser criado se o user_id for o dono do projectId.
+
+2. Listar Formulários do Projeto
 
     Rota: GET /forms/project/{project_id}
 
-    Uso no App: Carrega a lista de atividades disponíveis para aquela oficina específica.
+    Descrição: Retorna todos os formulários ativos vinculados a um projeto específico.
 
-B. Dashboard de Resultados (Dono apenas)
+3. Resultados e Analytics
 
     Rota: GET /forms/{form_id}/results
 
-    Segurança: Se um aluno tentar acessar esta rota, o FormService disparará um erro 403 Forbidden.
+        Descrição: Lista todas as respostas individuais (Submissions) com dados do respondente.
 
-    Resposta: Retorna um array com todas as submissões e os dados dos usuários que as enviaram.
+    Rota: GET /forms/{form_id}/analytics
 
-5. Destaque Técnico para o TCC: "Schemaless-on-SQL"
+        Descrição: Retorna dados sumarizados (Total e contagem diária) para dashboards.
 
-Explique para a banca que você utilizou uma técnica de Esquema Dinâmico.
+4. Exportação (Download)
 
-    O Backend não precisa saber quais campos o formulário tem.
+    Rota: GET /forms/{form_id}/export/csv
 
-    O React Native lê o JSON structure, percorre a lista e renderiza os componentes de input (TextInput, Picker, Switch) em tempo de execução.
+    Descrição: Retorna um fluxo de dados (Stream) que o navegador/celular interpreta como um download de arquivo .csv.
 
-    Isso reduz drasticamente o custo de manutenção do software.
+    Headers: Content-Disposition configurado para sugerir o nome do arquivo dinamicamente.
+
+    🔐 Schemas de Estrutura Dinâmica
+Classe	Descrição
+FormField	Define um campo individual: label, type (text, number, image, etc), e se é required.
+FormCreate	Recebe o projectId e a lista de FormField.
+FormResponse	Retorna o objeto completo. O campo structure é devolvido como Any (JSON nativo).

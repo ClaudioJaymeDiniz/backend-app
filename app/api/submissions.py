@@ -24,3 +24,14 @@ async def update_my_submission(
 @router.get("/me", response_model=List[SubmissionResponse])
 async def list_my_responses(user = Depends(get_current_user)):
     return await SubmissionService.get_my_submissions(user.id)
+
+@router.get("/form/{form_id}", response_model=List[SubmissionResponse])
+async def list_form_submissions(
+    form_id: str, 
+    user = Depends(get_current_user)
+):
+    """
+    Retorna as respostas de um formulário específico.
+    A lógica de quem vê o quê está isolada no Service.
+    """
+    return await SubmissionService.get_submissions_by_context(form_id, user.id)

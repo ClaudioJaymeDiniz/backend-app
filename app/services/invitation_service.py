@@ -1,53 +1,101 @@
 from app.core.prisma_client import db
 from fastapi import HTTPException
 from app.core.mail import send_invitation_email
+from datetime import datetime
 
 class InvitationService:
     @staticmethod
-    async def invite_user(project_id: str, email: str, owner_id: str):
-        # 1. Verificar se quem está convidando é o dono do projeto
-        project = await db.project.find_unique(where={"id": project_id})
+    # Alteramos os nomes para bater com o Schema: email e projectId
+    async def create_invitation(projectId: str, email: str, owner_id: str, role: str = "COLLECTOR"):
+        # 1. Validação: O projeto existe e quem está convidando é o dono?
+        email_limpo = email.lower().strip()
+        project = await db.project.find_unique(where={"id": projectId})
         if not project or project.ownerId != owner_id:
-            raise HTTPException(status_code=403, detail="Apenas o dono pode convidar")
+            raise HTTPException(status_code=403, detail="Acesso negado ao projeto")
 
-        # 2. Criar o convite no banco
-        invitation = await db.project_invitation.create(
+        # 2. BUSCA DINÂMICA: O e-mail já é de alguém cadastrado no sistema?
+        registered_user = await db.user.find_unique(where={"email": email})
+
+        if registered_user:
+    # Usuário ENCONTRADO: Vinculamos ao projeto
+            await db.userproject.upsert(
+                where={
+                    "userId_projectId": {
+                        "userId": registered_user.id,
+                        "projectId": projectId
+                    }
+                },
+                data={
+                    "update": {
+                        "role": role
+                    },
+                    "create": {
+                        "userId": registered_user.id,
+                        "projectId": projectId,
+                        "role": role
+                    }
+                }
+            )
+            status = "ACCEPTED"
+            u_id = registered_user.id
+        else:
+            # Usuário NÃO ENCONTRADO: Envia e-mail de convite para ele se cadastrar
+            status = "PENDING"
+            u_id = None
+            try:
+                await send_invitation_email(email, project.name)
+            except Exception:
+                print(f"Erro ao enviar e-mail para {email}, mas convite será criado.")
+
+        # 3. Registra o histórico do convite
+        return await db.projectinvitation.create(
             data={
                 "email": email,
-                "projectId": project_id
+                "projectId": projectId,
+                "status": status,
+                "userId": u_id
             }
         )
 
-        # 3. Disparar o e-mail (Atende ao RF 05)
-        # Usamos await para garantir que o e-mail seja enviado antes de retornar sucesso
-        try:
-            await send_invitation_email(email, project.name)
-        except Exception as e:
-            # Opcional: Logar o erro, mas manter o convite criado no banco
-            print(f"Erro ao enviar e-mail: {e}")
+    @staticmethod
+    async def check_access(project_id: str, email: str):
+        """Valida se o e-mail tem convite aceito ou é dono."""
+        # Busca convite aceito OU se o usuário é dono do projeto
+        access = await db.projectinvitation.find_first(
+            where={
+                "projectId": project_id,
+                "email": email,
+                "status": "ACCEPTED"
+            }
+        )
+        if not access:
+            # Verifica se ele é o OWNER original
+            project = await db.project.find_unique(where={"id": project_id})
+            if not project or project.ownerId != email: # Ajustar se comparar por ID ou Email
+                 raise HTTPException(status_code=403, detail="Sem permissão de acesso")
 
-        return invitation
 
     @staticmethod
-    async def check_access(project_id: str, user_email: str):
+    async def get_my_pending_invitations(email: str):
         """
-        Verifica se um usuário tem permissão para ver/responder.
-        Atende ao RF 17 (Autenticação para Respondentes Privados).
+        Busca todos os convites com status PENDING ignorando maiúsculas/minúsculas.
         """
-        project = await db.project.find_unique(where={"id": project_id})
-        
-        # Se for público, qualquer um passa
-        if project.isPublic:
-            return True
-            
-        # Se for privado, checa se há um convite ou se ele já é membro
-        invitation = await db.project_invitation.find_unique(
-            where={"email_projectId": {"email": user_email, "projectId": project_id}}
+        return await db.projectinvitation.find_many(
+            where={
+                "email": {
+                    "equals": email,
+                    "mode": "insensitive" # Isso resolve o problema de Claudio vs claudio
+                },
+                "status": "PENDING"
+            },
+            include={
+                "project": {
+                    "include": {
+                        "owner": True 
+                    }
+                }
+            },
+            order={
+                "createdAt": "desc"
+            }
         )
-        
-        #if invitation and invitation.status == "ACCEPTED":
-            #return True
-        if invitation and invitation.status in ["PENDING", "ACCEPTED"]:
-            return True
-            
-        raise HTTPException(status_code=403, detail="Este projeto é privado e você não foi convidado.")

@@ -3,6 +3,9 @@ from typing import List
 from app.api.deps import get_current_user
 from app.schemas.project import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.services.project_service import ProjectService
+from app.core.prisma_client import db
+from app.schemas.project import ProjectFullResponse
+
 
 router = APIRouter(prefix="/projects", tags=["Projetos"])
 
@@ -13,9 +16,13 @@ async def create_project(
 ):
     return await ProjectService.create_project(data, user.id)
 
-@router.get("/", response_model=List[ProjectResponse])
+#@router.get("/", response_model=List[ProjectResponse])
+#async def list_my_projects(user = Depends(get_current_user)):
+    #return await ProjectService.get_projects_by_owner(user.id)
+
+@router.get("/", response_model=List[ProjectResponse]) # Ou ProjectFullResponse se quiser os nomes
 async def list_my_projects(user = Depends(get_current_user)):
-    return await ProjectService.get_projects_by_owner(user.id)
+    return await ProjectService.list_projects(user.id)
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(
@@ -50,3 +57,22 @@ async def permanent_delete(project_id: str, user = Depends(get_current_user)):
          raise HTTPException(status_code=404, detail="Projeto não encontrado")
     
     return await ProjectService.delete_project(project_id)
+
+@router.get("/{project_id}", response_model=ProjectFullResponse)
+async def get_project(project_id: str, current_user = Depends(get_current_user)):
+    project = await db.project.find_unique(
+        where={"id": project_id},
+        include={
+            "owner": True,
+            "members": {
+                "include": {
+                    "user": True
+                }
+            }
+        }
+    )
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+        
+    return project

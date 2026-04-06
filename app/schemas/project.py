@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
+from typing import List, Optional
+from app.schemas.user import UserSimple
 
 class ProjectBase(BaseModel):
     name: str
@@ -24,6 +26,22 @@ class ProjectResponse(ProjectBase):
     id: str
     ownerId: str
     createdAt: datetime
+    deletedAt: Optional[datetime] = None # Importante para não dar erro de validação
+
+    class Config:
+        from_attributes = True
+
+class ProjectMemberResponse(BaseModel):
+    role: str
+    userId: str
+    user: UserSimple
+
+    class Config:
+        from_attributes = True
+
+class ProjectFullResponse(ProjectResponse):
+    owner: Optional[UserSimple] = None
+    members: List[ProjectMemberResponse] = []
 
     class Config:
         from_attributes = True

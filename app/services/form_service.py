@@ -3,26 +3,31 @@ import io
 from app.core.prisma_client import db
 from app.schemas.form import FormCreate, FormUpdate
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
+#from fastapi.responses import StreamingResponse
+from prisma import Json
+from datetime import datetime
 
 class FormService:
+    
     @staticmethod
     async def create_form(data: FormCreate, user_id: str):
-        # Verificar se o projeto existe e pertence ao usuário
+        # 1. Verificar projeto... (mantenha igual)
         project = await db.project.find_unique(where={"id": data.projectId})
-        
         if not project or project.ownerId != user_id:
             raise HTTPException(status_code=403, detail="Acesso negado ao projeto")
-
-        # Mapeamos 'fields' do Pydantic para 'structure' do Prisma
-        fields_json = [field.model_dump() for field in data.fields]
+        
+        # 2. Converter usando 'structure' que vem do Schema ajustado
+        # Mudamos data.fields para data.structure
+        fields_json = [field.model_dump() for field in data.structure]
 
         return await db.form.create(
             data={
                 "title": data.title,
                 "description": data.description,
-                "projectId": data.projectId,
-                "structure": fields_json
+                "structure": Json(fields_json), 
+                "project": {
+                    "connect": {"id": data.projectId}
+                }
             }
         )
 
@@ -80,19 +85,31 @@ class FormService:
     
     @staticmethod
     async def archive_form(form_id: str, user_id: str):
-        """Arquiva um formulário específico."""
-        from datetime import datetime
-        # Verificação de dono antes de arquivar
+        """
+        Realiza a exclusão lógica (Soft Delete) do formulário.
+        Valida se o usuário é o proprietário do projeto vinculado.
+        """
+        # 1. Busca otimizada: trazemos apenas o ownerId do projeto para validação
         form = await db.form.find_unique(
             where={"id": form_id},
-            include={"project": True}
+            include={
+                "project": {
+                    "select": {"ownerId": True}
+                }
+            }
         )
-        if not form or form.project.ownerId != user_id:
-            raise HTTPException(status_code=403, detail="Acesso negado")
 
+        # 2. Guard Clause: Se não existe ou não é dono, barramos cedo
+        if not form or form.project.ownerId != user_id:
+            raise HTTPException(
+                status_code=403, 
+                detail="Acesso negado: você não tem permissão para arquivar este formulário"
+            )
+
+        # 3. Executa o update com o timestamp correto
         return await db.form.update(
             where={"id": form_id},
-            data={"deletedAt": datetime()}
+            data={"deletedAt": datetime.now()} # Agora chamando a função .now() corretamente
         )
 
     @staticmethod
@@ -139,38 +156,23 @@ class FormService:
     
     @staticmethod
     async def update_form(form_id: str, data: FormUpdate, user_id: str):
-        """
-        Atualiza a estrutura do formulário de forma segura.
-        Atende ao RF 13 (Edição).
-        """
-        # 1. Busca o formulário para validar permissão
-        form = await db.form.find_unique(
-            where={"id": form_id},
-            include={"project": True}
-        )
-
-        if not form:
-            raise HTTPException(status_code=404, detail="Formulário não encontrado")
-        
-        if form.project.ownerId != user_id:
+        # 1. Busca e validação... (mantenha igual)
+        form = await db.form.find_unique(where={"id": form_id}, include={"project": True})
+        if not form or form.project.ownerId != user_id:
             raise HTTPException(status_code=403, detail="Acesso negado")
 
-        # 2. Prepara o dicionário de atualização (apenas o que foi enviado)
         update_data = {}
-        if data.title is not None: 
-            update_data["title"] = data.title
-        if data.description is not None: 
-            update_data["description"] = data.description
-        if data.fields is not None:
-            # Converte a lista de objetos Pydantic em JSON para o Prisma
-            update_data["structure"] = [field.model_dump() for field in data.fields]
+        if data.title is not None: update_data["title"] = data.title
+        if data.description is not None: update_data["description"] = data.description
+        
+        # 2. Ajuste aqui: data.fields vira data.structure
+        if data.structure is not None:
+            update_data["structure"] = Json([field.model_dump() for field in data.structure])
 
-        # 3. Executa a atualização
         return await db.form.update(
             where={"id": form_id},
             data=update_data
         )
-
 
 
     @staticmethod
