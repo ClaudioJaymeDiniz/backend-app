@@ -2,7 +2,7 @@ from fastapi.responses import Response
 from fastapi import APIRouter, Depends, status, HTTPException
 from typing import List
 from app.api.deps import get_current_user
-from app.schemas.form import FormCreate, FormResponse
+from app.schemas.form import FormCreate, FormResponse, FormUpdate, FormPublicResponse
 from app.services.form_service import FormService
 from app.schemas.submission import SubmissionResponse
 from app.services.invitation_service import InvitationService
@@ -19,6 +19,10 @@ async def list_project_forms(project_id: str, user = Depends(get_current_user)):
     # Aqui poderíamos validar se o usuário tem acesso ao projeto antes de listar
     return await FormService.get_forms_by_project(project_id)
 
+@router.get("/public", response_model=List[FormPublicResponse])
+async def list_public_forms(user = Depends(get_current_user)):
+    return await FormService.get_public_forms(user.id)
+
 @router.get("/{form_id}", response_model=FormResponse)
 async def get_form_details(form_id: str, user = Depends(get_current_user)):
     """
@@ -29,10 +33,19 @@ async def get_form_details(form_id: str, user = Depends(get_current_user)):
     if not form:
         raise HTTPException(status_code=404, detail="Formulário não encontrado")
     
-    # Validação de segurança unificada
-    await InvitationService.check_access(form.projectId, user.email)
+    # Formulario publico pode ser acessado por qualquer usuario autenticado.
+    if not form.isPublic:
+        await InvitationService.check_access(form.projectId, user.id, user.email)
     
     return form
+
+@router.patch("/{form_id}", response_model=FormResponse)
+async def update_form(
+    form_id: str,
+    data: FormUpdate,
+    user = Depends(get_current_user)
+):
+    return await FormService.update_form(form_id, data, user.id)
 
 @router.get("/{form_id}/export/csv")
 async def export_responses(form_id: str, user = Depends(get_current_user)):
@@ -48,17 +61,6 @@ async def export_responses(form_id: str, user = Depends(get_current_user)):
     }
     
     return Response(content=csv_data, media_type="text/csv", headers=headers)
-
-@router.get("/{form_id}", response_model=FormResponse)
-async def get_form_details(form_id: str, user = Depends(get_current_user)):
-    form = await FormService.get_form_by_id(form_id)
-    if not form:
-        raise HTTPException(status_code=404, detail="Formulário não encontrado")
-    
-    # Validação de acesso baseada no projeto (RF 04 e 17)
-    await InvitationService.check_access(form.projectId, user.email)
-    
-    return form
 
 @router.get("/{form_id}/analytics")
 async def get_analytics(form_id: str, user = Depends(get_current_user)):

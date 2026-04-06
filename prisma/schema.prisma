@@ -62,6 +62,7 @@ model Form {
   id          String       @id @default(uuid())
   title       String
   description String?
+  isPublic    Boolean      @default(false)
   structure   Json         // Estrutura dinâmica dos campos
   projectId   String
   project     Project      @relation(fields: [projectId], references: [id])

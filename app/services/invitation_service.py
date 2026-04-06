@@ -58,21 +58,29 @@ class InvitationService:
         )
 
     @staticmethod
-    async def check_access(project_id: str, email: str):
-        """Valida se o e-mail tem convite aceito ou é dono."""
-        # Busca convite aceito OU se o usuário é dono do projeto
+    async def check_access(project_id: str, user_id: str, email: str):
+        """Valida acesso por dono do projeto (id) ou convite aceito (email)."""
+        project = await db.project.find_unique(where={"id": project_id})
+        if not project:
+            raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+
+        # Dono sempre tem acesso.
+        if project.ownerId == user_id:
+            return
+
         access = await db.projectinvitation.find_first(
             where={
                 "projectId": project_id,
-                "email": email,
+                "email": {
+                    "equals": email,
+                    "mode": "insensitive"
+                },
                 "status": "ACCEPTED"
             }
         )
+
         if not access:
-            # Verifica se ele é o OWNER original
-            project = await db.project.find_unique(where={"id": project_id})
-            if not project or project.ownerId != email: # Ajustar se comparar por ID ou Email
-                 raise HTTPException(status_code=403, detail="Sem permissão de acesso")
+            raise HTTPException(status_code=403, detail="Sem permissao de acesso")
 
 
     @staticmethod

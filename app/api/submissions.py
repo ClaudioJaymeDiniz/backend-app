@@ -11,7 +11,7 @@ async def submit_form(data: SubmissionCreate, user = Depends(get_current_user)):
     # Convertemos o Pydantic para dict para facilitar o uso no Service
     # e garantimos que o userId logado seja o dono da submissão
     submission_data = data.model_dump()
-    return await SubmissionService.create_submission(submission_data, user.id)
+    return await SubmissionService.create_submission(submission_data, user.id, user.email)
 
 @router.patch("/{submission_id}", response_model=SubmissionResponse)
 async def update_my_submission(

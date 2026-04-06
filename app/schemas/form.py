@@ -12,6 +12,7 @@ class FormField(BaseModel):
 class FormBase(BaseModel):
     title: str
     description: Optional[str] = None
+    isPublic: bool = False
 
 class FormCreate(FormBase):
     projectId: str
@@ -20,6 +21,7 @@ class FormCreate(FormBase):
 class FormUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    isPublic: Optional[bool] = None
     structure: Optional[List[FormField]] = None
 
 class FormResponse(FormBase):
@@ -27,7 +29,18 @@ class FormResponse(FormBase):
     projectId: str
     structure: Any  # O JSON que o Prisma retorna
     createdAt: datetime
+    submissionCount: int = 0
 
     class Config:
         from_attributes = True
+
+class FormPublicResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str] = None
+    isPublic: bool
+    projectId: str
+    projectName: str
+    projectColor: Optional[str] = None
+    ownerId: str
 

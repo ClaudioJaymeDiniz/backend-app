@@ -24,6 +24,7 @@ class FormService:
             data={
                 "title": data.title,
                 "description": data.description,
+                "isPublic": data.isPublic,
                 "structure": Json(fields_json), 
                 "project": {
                     "connect": {"id": data.projectId}
@@ -33,13 +34,54 @@ class FormService:
 
     @staticmethod
     async def get_forms_by_project(project_id: str):
-        """Lista formulários ativos de um projeto."""
-        return await db.form.find_many(
+        """Lista formulários ativos de um projeto com contagem de submissões."""
+        forms = await db.form.find_many(
             where={
                 "projectId": project_id,
                 "deletedAt": None # Ignora formulários arquivados
-            }
+            },
+            include={"submissions": True}
         )
+        
+        # Adiciona o submissionCount ao response contando as submissões
+        return [
+            {
+                "id": f.id,
+                "title": f.title,
+                "description": f.description,
+                "isPublic": f.isPublic,
+                "structure": f.structure,
+                "projectId": f.projectId,
+                "createdAt": f.createdAt,
+                "submissionCount": len(f.submissions)
+            }
+            for f in forms
+        ]
+
+    @staticmethod
+    async def get_public_forms(user_id: str = None):
+        forms = await db.form.find_many(
+            where={
+                "isPublic": True,
+                "deletedAt": None
+            },
+            include={"project": True},
+            order={"createdAt": "desc"}
+        )
+
+        return [
+            {
+                "id": f.id,
+                "title": f.title,
+                "description": f.description,
+                "isPublic": f.isPublic,
+                "projectId": f.projectId,
+                "projectName": f.project.name,
+                "projectColor": f.project.themeColor,
+                "ownerId": f.project.ownerId,  # Adicionamos o ID do dono para filtrar no frontend
+            }
+            for f in forms
+        ]
 
     @staticmethod
     async def get_form_by_id(form_id: str):
@@ -164,6 +206,7 @@ class FormService:
         update_data = {}
         if data.title is not None: update_data["title"] = data.title
         if data.description is not None: update_data["description"] = data.description
+        if data.isPublic is not None: update_data["isPublic"] = data.isPublic
         
         # 2. Ajuste aqui: data.fields vira data.structure
         if data.structure is not None:

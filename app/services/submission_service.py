@@ -2,34 +2,52 @@ from app.core.prisma_client import db
 from fastapi import HTTPException
 from app.schemas.submission import SubmissionUpdate
 from app.core.mail import send_submission_notification
+from app.services.invitation_service import InvitationService
+from prisma import Json
+import traceback
 
 
 
 class SubmissionService:
     @staticmethod
-    async def create_submission(data: dict, user_id: str):
-        # 1. Salva a submissão no banco usando a sintaxe de conexão do Prisma
+    async def create_submission(data: dict, user_id: str, user_email: str):
+        # Valida os campos essenciais antes de persistir.
+        submission_id = data.get("id")
+        form_id = data.get("formId")
+        form_data = data.get("formData")
+
+        if not submission_id or not form_id or form_data is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Payload invalido. Campos obrigatorios: id, formId e formData."
+            )
+
         try:
+            # Verifica se o formulario existe e valida acesso para formulario privado.
+            form_exists = await db.form.find_unique(where={"id": form_id})
+            if not form_exists:
+                raise HTTPException(status_code=404, detail="Formulario nao encontrado")
+
+            if not form_exists.isPublic:
+                await InvitationService.check_access(form_exists.projectId, user_id, user_email)
+
             submission = await db.submission.create(
                 data={
-                    "id": data["id"],
-                    # Garante que o formData seja tratado como JSON/Dict
-                    "formData": data["formData"],
-                    # Uso do 'connect' para garantir integridade referencial com User
+                    "id": submission_id,
+                    "formData": Json(form_data),
                     "user": {
                         "connect": {"id": user_id}
                     },
-                    # Uso do 'connect' para garantir integridade referencial com Form
                     "form": {
-                        "connect": {"id": data["formId"]}
-                    }
+                        "connect": {"id": form_id}
+                    },
                 }
             )
 
             # 2. Busca informações do dono para notificar (RF 15)
             # O include profundo permite acessar o email do owner através do projeto
             form_info = await db.form.find_unique(
-                where={"id": data["formId"]},
+                where={"id": form_id},
                 include={
                     "project": {
                         "include": {
@@ -53,10 +71,18 @@ class SubmissionService:
 
             return submission
 
+        except HTTPException:
+            raise
+
         except Exception as e:
-            # Log detalhado no console do Linux Mint para debug
-            print(f"❌ Erro crítico ao criar submissão no Prisma: {e}")
-            # Retorna 500 para o mobile saber que deve manter na fila de sync (SQLite)
+            error_message = str(e)
+            print(f"Erro critico ao criar submissao no Prisma: {error_message}")
+            print(traceback.format_exc())
+
+            # Mapeia erros comuns para status mais apropriados.
+            if "Unique constraint failed" in error_message and "id" in error_message:
+                raise HTTPException(status_code=409, detail="Submissao ja registrada")
+
             raise HTTPException(
                 status_code=500, 
                 detail="Erro interno ao processar a coleta de dados."
@@ -73,9 +99,12 @@ class SubmissionService:
         if submission.userId != user_id:
             raise HTTPException(status_code=403, detail="Você só pode editar suas próprias respostas")
 
+        if data.formData is None:
+            raise HTTPException(status_code=400, detail="formData e obrigatorio para atualizacao")
+
         return await db.submission.update(
             where={"id": submission_id},
-            data={"formData": data.formData}
+            data={"formData": Json(data.formData)}
         )
 
     @staticmethod
