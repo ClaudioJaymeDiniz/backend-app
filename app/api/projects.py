@@ -36,6 +36,14 @@ async def update_project(
     
     return await ProjectService.update_project(project_id, data)    
 
+@router.delete("/{project_id}", response_model=ProjectResponse)
+async def archive_project(
+    project_id: str,
+    user = Depends(get_current_user)
+):
+    """Arquiva o projeto em vez de excluir definitivamente."""
+    return await ProjectService.archive_project(project_id, user.id)
+
 # Rota para ver a Lixeira
 @router.get("/archived", response_model=List[ProjectResponse])
 async def list_trash(user = Depends(get_current_user)):
@@ -52,11 +60,7 @@ async def restore(project_id: str, user = Depends(get_current_user)):
 @router.delete("/{project_id}/permanent")
 async def permanent_delete(project_id: str, user = Depends(get_current_user)):
     """Exclui definitivamente do banco de dados."""
-    project = await ProjectService.get_project_by_id(project_id)
-    if not project or project.ownerId != user.id:
-         raise HTTPException(status_code=404, detail="Projeto não encontrado")
-    
-    return await ProjectService.delete_project(project_id)
+    return await ProjectService.delete_project_permanent_as_owner(project_id, user.id)
 
 @router.get("/{project_id}", response_model=ProjectFullResponse)
 async def get_project(project_id: str, current_user = Depends(get_current_user)):

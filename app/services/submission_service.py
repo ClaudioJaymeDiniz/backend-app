@@ -24,9 +24,18 @@ class SubmissionService:
 
         try:
             # Verifica se o formulario existe e valida acesso para formulario privado.
-            form_exists = await db.form.find_unique(where={"id": form_id})
+            form_exists = await db.form.find_unique(
+                where={"id": form_id},
+                include={"project": True}
+            )
             if not form_exists:
                 raise HTTPException(status_code=404, detail="Formulario nao encontrado")
+
+            if form_exists.project and form_exists.project.deletedAt is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Projeto arquivado nao pode receber respostas"
+                )
 
             if not form_exists.isPublic:
                 await InvitationService.check_access(form_exists.projectId, user_id, user_email)

@@ -69,6 +69,11 @@ class FormService:
             order={"createdAt": "desc"}
         )
 
+        active_project_forms = [
+            f for f in forms
+            if f.project and f.project.deletedAt is None
+        ]
+
         return [
             {
                 "id": f.id,
@@ -80,12 +85,20 @@ class FormService:
                 "projectColor": f.project.themeColor,
                 "ownerId": f.project.ownerId,  # Adicionamos o ID do dono para filtrar no frontend
             }
-            for f in forms
+            for f in active_project_forms
         ]
 
     @staticmethod
     async def get_form_by_id(form_id: str):
-        return await db.form.find_unique(where={"id": form_id})
+        form = await db.form.find_unique(
+            where={"id": form_id},
+            include={"project": True}
+        )
+
+        if form and form.project and form.project.deletedAt is not None:
+            raise HTTPException(status_code=400, detail="Projeto arquivado")
+
+        return form
 
     @staticmethod
     async def delete_form(form_id: str, user_id: str):

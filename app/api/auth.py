@@ -8,6 +8,13 @@ from app.schemas.user import UserUpdate
 import uuid
 from datetime import datetime, timedelta
 from app.schemas.user import PasswordRecoveryRequest, PasswordReset
+from pydantic import BaseModel
+from google.auth.transport import requests
+from google.oauth2 import id_token
+
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str
 
 
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
@@ -27,6 +34,48 @@ async def login(credentials: OAuth2PasswordRequestForm = Depends()):
     
     token = create_access_token(data={"sub": user.id, "email": user.email})
     return {"access_token": token, "token_type": "bearer"}
+
+@router.post("/google-login")
+async def google_login(request: GoogleLoginRequest):
+    """Login com token do Google/Firebase"""
+    try:
+        # Verificar o ID token com o Google (requer GOOGLE_CLIENT_ID)
+        # O GOOGLE_CLIENT_ID deve estar no seu .env ou variável de ambiente
+        CLIENT_ID = "353264650578-rnv8h6n5h1j6np1q9k2l3m4n5o6p7q8r9.apps.googleusercontent.com"
+        
+        # Verificar o token
+        idinfo = id_token.verify_oauth2_token(
+            request.id_token, 
+            requests.Request(), 
+            CLIENT_ID
+        )
+        
+        # Extrair informações do token
+        email = idinfo.get('email')
+        name = idinfo.get('name')
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Email não encontrado no token do Google")
+        
+        # Verificar se o usuário existe
+        user = await UserService.get_by_email(email)
+        
+        # Se não existe, criar novo usuário
+        if not user:
+            user_data = UserCreate(
+                email=email,
+                name=name or "Google User",
+                password=str(uuid.uuid4())  # Senha aleatória, pois é login social
+            )
+            user = await UserService.create_user(user_data)
+        
+        # Gerar token JWT
+        token = create_access_token(data={"sub": user.id, "email": user.email})
+        return {"access_token": token, "token_type": "bearer"}
+    
+    except Exception as e:
+        print(f"Erro ao verificar token do Google: {str(e)}")
+        raise HTTPException(status_code=401, detail="Token do Google inválido ou expirado")
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user = Depends(get_current_user)):
