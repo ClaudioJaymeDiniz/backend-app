@@ -65,3 +65,19 @@ async def export_responses(form_id: str, user = Depends(get_current_user)):
 @router.get("/{form_id}/analytics")
 async def get_analytics(form_id: str, user = Depends(get_current_user)):
     return await FormService.get_form_analytics(form_id, user.id)
+
+@router.delete("/{form_id}", response_model=FormResponse)
+async def archive_form(form_id: str, user = Depends(get_current_user)):
+    """Envia o formulário para a lixeira."""
+    return await FormService.archive_form(form_id, user.id)
+
+@router.post("/{form_id}/restore", response_model=FormResponse)
+async def restore_form(form_id: str, user = Depends(get_current_user)):
+    """Restaura um formulário da lixeira."""
+    return await FormService.restore_form(form_id, user.id)
+
+@router.delete("/{form_id}/permanent")
+async def permanent_delete_form(form_id: str, user = Depends(get_current_user)):
+    """Exclui permanentemente."""
+    await FormService.delete_form_permanent(form_id, user.id)
+    return {"detail": "Formulário excluído com sucesso"}

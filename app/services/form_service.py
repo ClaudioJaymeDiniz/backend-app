@@ -53,6 +53,7 @@ class FormService:
                 "structure": f.structure,
                 "projectId": f.projectId,
                 "createdAt": f.createdAt,
+                "deletedAt": f.deletedAt,
                 "submissionCount": len(f.submissions)
             }
             for f in forms
@@ -147,11 +148,7 @@ class FormService:
         # 1. Busca otimizada: trazemos apenas o ownerId do projeto para validação
         form = await db.form.find_unique(
             where={"id": form_id},
-            include={
-                "project": {
-                    "select": {"ownerId": True}
-                }
-            }
+            include={"project": True}
         )
 
         # 2. Guard Clause: Se não existe ou não é dono, barramos cedo
@@ -164,7 +161,7 @@ class FormService:
         # 3. Executa o update com o timestamp correto
         return await db.form.update(
             where={"id": form_id},
-            data={"deletedAt": datetime.now()} # Agora chamando a função .now() corretamente
+            data={"deletedAt": datetime.now()}
         )
 
     @staticmethod
@@ -188,7 +185,7 @@ class FormService:
 
         # 3. Define o Cabeçalho (Header)
         # Pegamos as labels da estrutura do formulário para serem os títulos das colunas
-        header = ["Data de Envio", "Respondente (E-mail)"]
+        header = ["Data de Envio", "E-mail"]
         field_labels = [field['label'] for field in form.structure]
         header.extend(field_labels)
         writer.writerow(header)
@@ -253,14 +250,13 @@ class FormService:
         # Nota: O Prisma permite fazer agrupamentos potentes
         submissions = await db.submission.find_many(
             where={"formId": form_id},
-            select={"createdAt": True},
             order_by={"createdAt": "asc"}
         )
 
         # Pequena lógica para formatar os dados para o gráfico do Frontend
         daily_counts = {}
         for s in submissions:
-            date_str = s["createdAt"].strftime("%d/%m")
+            date_str = s.createdAt.strftime("%d/%m")
             daily_counts[date_str] = daily_counts.get(date_str, 0) + 1
 
         return {
@@ -268,3 +264,41 @@ class FormService:
             "total_responses": total_responses,
             "chart_data": [{"date": k, "count": v} for k, v in daily_counts.items()]
         }
+    
+    @staticmethod
+    async def restore_form(form_id: str, user_id: str):
+        """Recuperação da Lixeira"""
+        # Mesma validação de dono
+        form = await db.form.find_unique(
+            where={"id": form_id},
+            include={"project": True}
+        )
+        
+        if not form or form.project.ownerId != user_id:
+            raise HTTPException(status_code=403, detail="Sem permissão para restaurar")
+
+        return await db.form.update(
+            where={"id": form_id},
+            data={"deletedAt": None}
+        )
+
+    @staticmethod
+    async def delete_form_permanent(form_id: str, user_id: str):
+        """Hard Delete (Deletar de vez)"""
+        form = await db.form.find_unique(
+            where={"id": form_id},
+            include={"project": True}
+        )
+        
+        if not form:
+            return {"ok": True, "alreadyDeleted": True}
+
+        if form.project.ownerId != user_id:
+            raise HTTPException(status_code=403, detail="Acesso negado")
+
+        if form.deletedAt is None:
+            raise HTTPException(status_code=400, detail="O formulário precisa ser arquivado antes de ser excluído definitivamente")
+
+        await db.submission.delete_many(where={"formId": form_id})
+
+        return await db.form.delete(where={"id": form_id})

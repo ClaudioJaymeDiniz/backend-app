@@ -29,6 +29,7 @@ class FormResponse(FormBase):
     projectId: str
     structure: Any  # O JSON que o Prisma retorna
     createdAt: datetime
+    deletedAt: Optional[datetime] = None
     submissionCount: int = 0
 
     class Config:
