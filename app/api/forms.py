@@ -2,7 +2,13 @@ from fastapi.responses import Response
 from fastapi import APIRouter, Depends, status, HTTPException
 from typing import List
 from app.api.deps import get_current_user
-from app.schemas.form import FormCreate, FormResponse, FormUpdate, FormPublicResponse
+from app.schemas.form import (
+    FormCreate,
+    FormResponse,
+    FormUpdate,
+    FormPublicResponse,
+    FormAnalyticsResponse,
+)
 from app.services.form_service import FormService
 from app.schemas.submission import SubmissionResponse
 from app.services.invitation_service import InvitationService
@@ -62,7 +68,7 @@ async def export_responses(form_id: str, user = Depends(get_current_user)):
     
     return Response(content=csv_data, media_type="text/csv", headers=headers)
 
-@router.get("/{form_id}/analytics")
+@router.get("/{form_id}/analytics", response_model=FormAnalyticsResponse)
 async def get_analytics(form_id: str, user = Depends(get_current_user)):
     return await FormService.get_form_analytics(form_id, user.id)
 

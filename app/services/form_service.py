@@ -1,11 +1,228 @@
 import csv
 import io
+import re
+import unicodedata
 from app.core.prisma_client import db
 from app.schemas.form import FormCreate, FormUpdate
 from fastapi import HTTPException
 #from fastapi.responses import StreamingResponse
 from prisma import Json
 from datetime import datetime
+from collections import Counter
+
+
+def _slugify(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text or "")
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", ascii_text).strip("_").lower()
+    return slug or "field"
+
+
+def _normalize_form_structure(structure: list) -> list:
+    """Garante que cada campo tenha fieldId estável e único dentro do formulário."""
+    used_ids = set()
+    normalized = []
+
+    for index, raw_field in enumerate(structure or []):
+        field = dict(raw_field)
+        provided_field_id = field.get("fieldId")
+        base_id = _slugify(provided_field_id or field.get("label") or f"field_{index + 1}")
+
+        field_id = base_id
+        suffix = 2
+        while field_id in used_ids:
+            field_id = f"{base_id}_{suffix}"
+            suffix += 1
+
+        used_ids.add(field_id)
+        field["fieldId"] = field_id
+        normalized.append(field)
+
+    return normalized
+
+
+def _structure_changed(original: list, normalized: list) -> bool:
+    if len(original or []) != len(normalized or []):
+        return True
+
+    for index, field in enumerate(normalized or []):
+        if (original[index] or {}).get("fieldId") != field.get("fieldId"):
+            return True
+
+    return False
+
+
+def _field_value_from_submission(submission_data: dict, field: dict):
+    """Suporta payload legado (label) e novo payload (fieldId)."""
+    field_id = field.get("fieldId")
+    label = field.get("label")
+
+    if field_id and field_id in submission_data:
+        return submission_data.get(field_id)
+
+    if label and label in submission_data:
+        return submission_data.get(label)
+
+    return None
+
+
+def _is_empty_value(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return len(value.strip()) == 0
+    if isinstance(value, list):
+        return len(value) == 0
+    return False
+
+
+def _build_field_analytics(field: dict, submissions: list) -> dict:
+    field_id = field.get("fieldId")
+    label = field.get("label", field_id)
+    field_type = (field.get("type") or "text").lower()
+
+    values = []
+    total_answered = 0
+    for submission in submissions:
+        value = _field_value_from_submission(submission.formData or {}, field)
+        values.append(value)
+        if not _is_empty_value(value):
+            total_answered += 1
+
+    total_submissions = len(submissions)
+    empty_count = max(total_submissions - total_answered, 0)
+
+    # Select e checkbox geram distribuição por opção.
+    if field_type in {"select", "checkbox"}:
+        counter = Counter()
+        for value in values:
+            if _is_empty_value(value):
+                continue
+            if isinstance(value, list):
+                for item in value:
+                    counter[str(item)] += 1
+            else:
+                counter[str(value)] += 1
+
+        options = field.get("options") or []
+        option_counts = [{"label": option, "count": counter.get(option, 0)} for option in options]
+        extras = [{"label": key, "count": count} for key, count in counter.items() if key not in set(options)]
+
+        return {
+            "fieldId": field_id,
+            "label": label,
+            "type": field_type,
+            "totalAnswered": total_answered,
+            "emptyCount": empty_count,
+            "chart": "pie" if field_type == "select" else "bar",
+            "series": option_counts + extras,
+            "stats": None,
+        }
+
+    # Campos numéricos retornam estatísticas + histograma simples por valor.
+    if field_type == "number":
+        numeric_values = []
+        for value in values:
+            if _is_empty_value(value):
+                continue
+            try:
+                numeric_values.append(float(value))
+            except (TypeError, ValueError):
+                continue
+
+        number_counter = Counter(str(v).rstrip("0").rstrip(".") if isinstance(v, float) else str(v) for v in numeric_values)
+        stats = None
+        if numeric_values:
+            sorted_values = sorted(numeric_values)
+            midpoint = len(sorted_values) // 2
+            if len(sorted_values) % 2 == 0:
+                median = (sorted_values[midpoint - 1] + sorted_values[midpoint]) / 2
+            else:
+                median = sorted_values[midpoint]
+
+            stats = {
+                "min": min(numeric_values),
+                "max": max(numeric_values),
+                "avg": round(sum(numeric_values) / len(numeric_values), 2),
+                "median": median,
+            }
+
+        return {
+            "fieldId": field_id,
+            "label": label,
+            "type": field_type,
+            "totalAnswered": total_answered,
+            "emptyCount": empty_count,
+            "chart": "bar",
+            "series": [{"label": k, "count": c} for k, c in number_counter.most_common(20)],
+            "stats": stats,
+        }
+
+    # Datas retornam série temporal por dia.
+    if field_type == "date":
+        date_counter = Counter()
+        for value in values:
+            if _is_empty_value(value):
+                continue
+            date_counter[str(value)] += 1
+
+        ordered_series = [{"label": k, "count": date_counter[k]} for k in sorted(date_counter.keys())]
+        return {
+            "fieldId": field_id,
+            "label": label,
+            "type": field_type,
+            "totalAnswered": total_answered,
+            "emptyCount": empty_count,
+            "chart": "line",
+            "series": ordered_series,
+            "stats": None,
+        }
+
+    # Campos de mídia mostram cobertura de envio.
+    if field_type in {"image", "file"}:
+        with_attachment = total_answered
+        without_attachment = empty_count
+        return {
+            "fieldId": field_id,
+            "label": label,
+            "type": field_type,
+            "totalAnswered": total_answered,
+            "emptyCount": empty_count,
+            "chart": "bar",
+            "series": [
+                {"label": "Com anexo", "count": with_attachment},
+                {"label": "Sem anexo", "count": without_attachment},
+            ],
+            "stats": None,
+        }
+
+    # Text/textarea e tipos desconhecidos: top valores + métricas básicas.
+    text_counter = Counter()
+    lengths = []
+    for value in values:
+        if _is_empty_value(value):
+            continue
+        value_text = str(value).strip()
+        text_counter[value_text] += 1
+        lengths.append(len(value_text))
+
+    stats = None
+    if lengths:
+        stats = {
+            "avgLength": round(sum(lengths) / len(lengths), 2),
+            "maxLength": max(lengths),
+        }
+
+    return {
+        "fieldId": field_id,
+        "label": label,
+        "type": field_type,
+        "totalAnswered": total_answered,
+        "emptyCount": empty_count,
+        "chart": "bar",
+        "series": [{"label": k, "count": c} for k, c in text_counter.most_common(10)],
+        "stats": stats,
+    }
 
 class FormService:
     
@@ -18,7 +235,7 @@ class FormService:
         
         # 2. Converter usando 'structure' que vem do Schema ajustado
         # Mudamos data.fields para data.structure
-        fields_json = [field.model_dump() for field in data.structure]
+        fields_json = _normalize_form_structure([field.model_dump() for field in data.structure])
 
         return await db.form.create(
             data={
@@ -44,20 +261,30 @@ class FormService:
         )
         
         # Adiciona o submissionCount ao response contando as submissões
-        return [
-            {
-                "id": f.id,
-                "title": f.title,
-                "description": f.description,
-                "isPublic": f.isPublic,
-                "structure": f.structure,
-                "projectId": f.projectId,
-                "createdAt": f.createdAt,
-                "deletedAt": f.deletedAt,
-                "submissionCount": len(f.submissions)
-            }
-            for f in forms
-        ]
+        response = []
+        for f in forms:
+            normalized_structure = _normalize_form_structure(f.structure or [])
+            if _structure_changed(f.structure or [], normalized_structure):
+                await db.form.update(
+                    where={"id": f.id},
+                    data={"structure": Json(normalized_structure)}
+                )
+
+            response.append(
+                {
+                    "id": f.id,
+                    "title": f.title,
+                    "description": f.description,
+                    "isPublic": f.isPublic,
+                    "structure": normalized_structure,
+                    "projectId": f.projectId,
+                    "createdAt": f.createdAt,
+                    "deletedAt": f.deletedAt,
+                    "submissionCount": len(f.submissions)
+                }
+            )
+
+        return response
 
     @staticmethod
     async def get_public_forms(user_id: str = None):
@@ -98,6 +325,15 @@ class FormService:
 
         if form and form.project and form.project.deletedAt is not None:
             raise HTTPException(status_code=400, detail="Projeto arquivado")
+
+        if form:
+            normalized_structure = _normalize_form_structure(form.structure or [])
+            if _structure_changed(form.structure or [], normalized_structure):
+                form = await db.form.update(
+                    where={"id": form.id},
+                    data={"structure": Json(normalized_structure)},
+                    include={"project": True}
+                )
 
         return form
 
@@ -186,7 +422,8 @@ class FormService:
         # 3. Define o Cabeçalho (Header)
         # Pegamos as labels da estrutura do formulário para serem os títulos das colunas
         header = ["Data de Envio", "E-mail"]
-        field_labels = [field['label'] for field in form.structure]
+        normalized_structure = _normalize_form_structure(form.structure or [])
+        field_labels = [field.get("label", field.get("fieldId", "Campo")) for field in normalized_structure]
         header.extend(field_labels)
         writer.writerow(header)
 
@@ -197,9 +434,9 @@ class FormService:
                 sub.user.email if sub.user else "Anônimo"
             ]
             # Busca o valor de cada campo no JSON formData
-            for label in field_labels:
-                # Se o campo não existir na resposta, fica vazio
-                row.append(sub.formData.get(label, ""))
+            for field in normalized_structure:
+                value = _field_value_from_submission(sub.formData or {}, field)
+                row.append("" if value is None else value)
             writer.writerow(row)
 
         # 5. Retorna o fluxo de dados como um arquivo baixável
@@ -220,7 +457,7 @@ class FormService:
         
         # 2. Ajuste aqui: data.fields vira data.structure
         if data.structure is not None:
-            update_data["structure"] = Json([field.model_dump() for field in data.structure])
+            update_data["structure"] = Json(_normalize_form_structure([field.model_dump() for field in data.structure]))
 
         return await db.form.update(
             where={"id": form_id},
@@ -231,10 +468,8 @@ class FormService:
     @staticmethod
     async def get_form_analytics(form_id: str, user_id: str):
         """
-        Gera estatísticas básicas para o dashboard.
-        Atende ao RF 11.
+        Retorna analytics dinâmico por campo, compatível com formulários de estrutura variável.
         """
-        # 1. Verificar se o formulário existe e se o usuário é o dono
         form = await db.form.find_unique(
             where={"id": form_id},
             include={"project": True}
@@ -243,26 +478,38 @@ class FormService:
         if not form or form.project.ownerId != user_id:
             raise HTTPException(status_code=403, detail="Acesso negado")
 
-        # 2. Contar total de respostas
-        total_responses = await db.submission.count(where={"formId": form_id})
-
-        # 3. Agrupar respostas por data (Últimos 7 dias)
-        # Nota: O Prisma permite fazer agrupamentos potentes
         submissions = await db.submission.find_many(
             where={"formId": form_id},
             order_by={"createdAt": "asc"}
         )
 
-        # Pequena lógica para formatar os dados para o gráfico do Frontend
-        daily_counts = {}
+        structure = _normalize_form_structure(form.structure or [])
+        if _structure_changed(form.structure or [], structure):
+            await db.form.update(
+                where={"id": form.id},
+                data={"structure": Json(structure)}
+            )
+
+        daily_counts = Counter()
         for s in submissions:
-            date_str = s.createdAt.strftime("%d/%m")
-            daily_counts[date_str] = daily_counts.get(date_str, 0) + 1
+            date_str = s.createdAt.strftime("%Y-%m-%d")
+            daily_counts[date_str] += 1
+
+        daily_series = [{"date": day, "count": daily_counts[day]} for day in sorted(daily_counts.keys())]
+
+        fields_analytics = [_build_field_analytics(field, submissions) for field in structure]
+
+        total_possible_answers = len(submissions) * len(structure)
+        total_answered = sum(field_data["totalAnswered"] for field_data in fields_analytics)
+        completion_rate = round(total_answered / total_possible_answers, 4) if total_possible_answers else 0.0
 
         return {
+            "formId": form.id,
             "title": form.title,
-            "total_responses": total_responses,
-            "chart_data": [{"date": k, "count": v} for k, v in daily_counts.items()]
+            "totalSubmissions": len(submissions),
+            "completionRate": completion_rate,
+            "dailySubmissions": daily_series,
+            "fields": fields_analytics,
         }
     
     @staticmethod

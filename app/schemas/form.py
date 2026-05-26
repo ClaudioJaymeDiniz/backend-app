@@ -4,6 +4,7 @@ from typing import Optional, List, Any
 from datetime import datetime
 
 class FormField(BaseModel):
+    fieldId: Optional[str] = None
     label: str
     type: str  # text, number, select, image, gps, etc.
     required: bool = True
@@ -44,4 +45,34 @@ class FormPublicResponse(BaseModel):
     projectName: str
     projectColor: Optional[str] = None
     ownerId: str
+
+
+class AnalyticsSeriesPoint(BaseModel):
+    label: str
+    count: int
+
+
+class AnalyticsDailyPoint(BaseModel):
+    date: str
+    count: int
+
+
+class AnalyticsFieldResponse(BaseModel):
+    fieldId: str
+    label: str
+    type: str
+    totalAnswered: int
+    emptyCount: int
+    chart: str
+    series: List[AnalyticsSeriesPoint]
+    stats: Optional[dict] = None
+
+
+class FormAnalyticsResponse(BaseModel):
+    formId: str
+    title: str
+    totalSubmissions: int
+    completionRate: float
+    dailySubmissions: List[AnalyticsDailyPoint]
+    fields: List[AnalyticsFieldResponse]
 

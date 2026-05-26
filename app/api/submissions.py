@@ -35,3 +35,12 @@ async def list_form_submissions(
     A lógica de quem vê o quê está isolada no Service.
     """
     return await SubmissionService.get_submissions_by_context(form_id, user.id)
+
+
+@router.get("/form/{form_id}/all", response_model=List[SubmissionResponse])
+async def list_all_form_submissions(
+    form_id: str,
+    user = Depends(get_current_user)
+):
+    """Retorna todas as respostas do formulário para o dono do projeto."""
+    return await SubmissionService.get_all_submissions_for_form(form_id, user.id)
